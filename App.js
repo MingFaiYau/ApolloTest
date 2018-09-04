@@ -7,7 +7,7 @@ import DateBubble from './DateBubble';
 import { ApolloClient, InMemoryCache } from 'apollo-boost';
 import { createHttpLink } from 'apollo-link-http';
 import { ApolloProvider, Query, Mutation } from 'react-apollo';
-import { query_get_latest_message, user_react_id, mutation_create_message } from './query';
+import { query_get_message, user_react_id, mutation_create_message } from './query';
 
 export default class App extends React.PureComponent {
   constructor(props) {
@@ -59,26 +59,32 @@ export default class App extends React.PureComponent {
       render = <ApolloProvider client={this.state.client}>
         <Query
           errorPolicy={'all'}
-          query={query_get_latest_message}
+          query={query_get_message}
           pollInterval={0}
-          variables={{ msgId: undefined, limit: 15 , userId: user_react_id }}
+          variables={{ limit: 5, userId: user_react_id }}
+          fetchPolicy='cache-and-network'
         >
           {
             (props) => {
               if (props.error) return <Text>{props.error}</Text>
               if (props.loading || !props.data) return <Text>Loading</Text>
+              this.afId = props.data.allMessages && props.data.allMessages.length > 0 ?
+                props.data.allMessages[props.data.allMessages.length - 1]._id : undefined
+              console.log('this.afId', this.afId)
               return <Mutation
                 mutation={mutation_create_message}
                 update={(cache, { data: { createMessage } }) => {
-                  console.log('createMessaged', createMessage)
-                  const { allMessages } = cache.readQuery({ query: query_get_message });
+                  const { allMessages } = cache.readQuery({
+                    query: query_get_message,
+                    variables: props.variables,
+                  });
+
                   cache.writeQuery({
                     query: query_get_message,
+                    variables: props.variables,
                     data: { allMessages: [createMessage].concat(allMessages) }
                   });
                 }}
-                ignoreResults={true}
-                onCompleted={() => console.log('onCompleted')}
               >
                 {
                   (createMessage, { loading }) => {
@@ -90,6 +96,20 @@ export default class App extends React.PureComponent {
                           inverted={true}
                           renderGoBottomButton={this.renderGoBottomButton}
                           renderDateBubble={this.renderDateBubble}
+                          loadEarlier={true}
+                          onLoadEarlier={(sProps) => {
+                            console.log('onLoadEarlier')
+                            props.fetchMore({
+                              variables: { afId: this.afId },
+                              updateQuery: (prev, { fetchMoreResult }) => {
+                                console.log(prev, fetchMoreResult)
+                                if (!fetchMoreResult) return prev
+                                return Object.assign({}, prev, {
+                                  allMessages: [...prev.allMessages, ...fetchMoreResult.allMessages]
+                                })
+                              }
+                            })
+                          }}
                           onSend={(sProps) => {
                             const msg = sProps[0]
                             if (msg) {
@@ -104,6 +124,7 @@ export default class App extends React.PureComponent {
                                     _id: msg._id,
                                     text: msg.text,
                                     createdAt: msg.createdAt,
+                                    sent: false,
                                     user: {
                                       _id: user_react_id,
                                       __typename: 'User',
@@ -114,9 +135,7 @@ export default class App extends React.PureComponent {
                               })
                             }
                           }}
-                          user={{
-                            _id: user_react_id
-                          }}
+                          user={{ _id: user_react_id }}
                         />
                       </View>
                     )
